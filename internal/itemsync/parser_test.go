@@ -467,7 +467,7 @@ func TestParseYAMLDefinitionsFromString(t *testing.T) {
 }
 
 func TestParseYAMLDefinitionsLegacyFlatFields(t *testing.T) {
-	// ElementOS / mxreq sync YAML uses top-level description/assumptions/steps
+	// mxreq sync YAML uses top-level description/assumptions/steps
 	// (same shape as docstring YAML), not nested under fields:.
 	yaml := `items:
   - title: "Load step page smoke"

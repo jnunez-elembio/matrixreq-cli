@@ -370,9 +370,9 @@ Uploads test execution results. Maps test cases (TC) to execution cases (XTC) vi
 | An upstream requirement step is not covered locally | post-match scan for an empty `Result` |
 | Two results in one run claim the same XTC | `groupByTest` entry count |
 
-Refusals are reported in `UploadResult.Skipped` (XTC ref → short reason) **and** `Issues` (operator-facing text), with `Successes[ref] = false` so the `n/N` summary stays truthful. A skipped XTC is distinct from a failed one: nothing was sent, so Matrix still holds what it held before. Consumers should read `-o json` rather than scraping the summary — `ElementOS/framework/sync/xtc-results.ts` (`parseUploadResult`) does exactly that.
+Refusals are reported in `UploadResult.Skipped` (XTC ref → short reason) **and** `Issues` (operator-facing text), with `Successes[ref] = false` so the `n/N` summary stays truthful. A skipped XTC is distinct from a failed one: nothing was sent, so Matrix still holds what it held before. Consumers should read `-o json` rather than scraping the summary — `App/framework/sync/xtc-results.ts` (`parseUploadResult`) does exactly that.
 
-Step-count drift is resolved by re-syncing the TC (`docstring:syncTests` on the ElementOS side) and recreating the XTC run, then re-uploading. Never "fix" it by loosening the gate.
+Step-count drift is resolved by re-syncing the TC (`docstring:syncTests` on the Application side) and recreating the XTC run, then re-uploading. Never "fix" it by loosening the gate.
 
 **`TestStep` is a partial view and must round-trip losslessly.** An upload rewrites the item's entire Steps field, so any key `TestStep` does not model would be *deleted* from the step. Matrix stores a step as a free-form object whose keys come from the project's `xtc_config`, so `TestStep` carries custom `MarshalJSON`/`UnmarshalJSON` that stash every unmodeled key in an `extra` map and write it back untouched. `modeledStepKeys` is derived from the struct tags by reflection, so adding a typed field cannot leave a key in both places.
 
