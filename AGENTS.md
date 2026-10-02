@@ -378,6 +378,10 @@ Step-count drift is resolved by re-syncing the TC (`docstring:syncTests` on the 
 
 This is not theoretical: before that marshaler existed, every upload silently dropped `"Ref"` — the `xtc_config` column id CUJO reads for "Requirement/Tspec Link" — emptying that column on every XTC an upload touched, while `itemsync` kept writing it correctly on the TC side (see `stepsToJSON`). When adding a field to `TestStep`, do not switch it to a plain struct marshal.
 
+**An item update is a full replacement — always merge, never send a partial field list.** `ItemService.Update` sends one `fx<id>` form parameter per listed field, and **Matrix clears every field the request omits.** Sending only the fields you mean to change silently empties the rest of the item. `updateXTCResults` therefore routes its four result fields through `mergeFieldValues`, which seeds the request from the item's current `FieldValList` and applies the overrides on top.
+
+Before that merge existed, recording results wiped **Assumptions, Test Setup, Test Materials, Test Purpose and Acceptance Criteria** off every XTC. This is a property of the API, not of the execution package: any new write path must fetch the item and merge, and `mxreq item update -f …` from the command line has the same sharp edge by design.
+
 ### Templates (`internal/templates/`)
 Embedded templates for Go/Python/TypeScript scaffolding. Used by `cli/init_templates.go`.
 

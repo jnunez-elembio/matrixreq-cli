@@ -39,9 +39,12 @@ type ExecutionResults struct {
 // upload touched, even though the upload never means to change step
 // definitions at all.
 type TestStep struct {
-	Action          string `json:"action"`
-	Expected        string `json:"expected"`
-	RequirementLink string `json:"RequirementLink"`
+	Action   string `json:"action"`
+	Expected string `json:"expected"`
+	// omitempty because Matrix omits the key entirely on steps that verify no
+	// requirement. Writing it back as "" would add a key the step never had,
+	// which is still an upload editing step definitions.
+	RequirementLink string `json:"RequirementLink,omitempty"`
 	Result          string `json:"result,omitempty"`  // "p", "f"
 	Human           string `json:"human,omitempty"`   // "passed", "failed"
 	Render          string `json:"render,omitempty"`  // "ok", "error"

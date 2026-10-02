@@ -45,8 +45,10 @@ func TestTestStepPreservesUnmodeledKeys(t *testing.T) {
 	}
 }
 
-func TestTestStepWithoutExtrasGainsNoKeys(t *testing.T) {
-	const raw = `{"action":"navigate","expected":"N/A","RequirementLink":""}`
+// Matrix omits RequirementLink on an action step, so the round-trip must not
+// invent it: an upload may add results, never keys.
+func TestTestStepActionStepGainsNoKeys(t *testing.T) {
+	const raw = `{"action":"navigate","expected":"N/A"}`
 
 	var step TestStep
 	if err := json.Unmarshal([]byte(raw), &step); err != nil {
@@ -57,12 +59,8 @@ func TestTestStepWithoutExtrasGainsNoKeys(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	var got map[string]any
-	if err := json.Unmarshal(out, &got); err != nil {
-		t.Fatalf("re-unmarshal: %v", err)
-	}
-	if len(got) != 3 {
-		t.Errorf("want only the 3 modeled keys, got %v", got)
+	if string(out) != raw {
+		t.Errorf("action step changed:\n before %s\n after  %s", raw, out)
 	}
 }
 

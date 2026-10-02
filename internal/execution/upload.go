@@ -3,6 +3,7 @@ package execution
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/VladGavrila/matrixreq-cli/internal/api"
@@ -131,6 +132,40 @@ func (u *UploadResult) skip(xtcRef, reason, issue string) {
 	u.Issues = append(u.Issues, issue)
 }
 
+// mergeFieldValues returns every field the item currently holds, with
+// overrides applied on top.
+//
+// An update is a full replacement: ItemService.Update sends one fx<id> form
+// parameter per listed field, and Matrix clears every field the request omits.
+// Sending only the fields an upload sets therefore wipes the rest of the item —
+// Assumptions, Test Setup, Test Materials, Test Purpose, Acceptance Criteria.
+// Field order is sorted by id purely so the request is deterministic.
+func mergeFieldValues(item *api.TrimItem, overrides map[int]string) []api.FieldValSetType {
+	values := make(map[int]string, len(overrides))
+	if item != nil && item.FieldValList != nil {
+		for _, fv := range item.FieldValList.FieldVal {
+			if fv.Value != "" {
+				values[fv.ID] = fv.Value
+			}
+		}
+	}
+	for id, value := range overrides {
+		values[id] = value
+	}
+
+	ids := make([]int, 0, len(values))
+	for id := range values {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+
+	fields := make([]api.FieldValSetType, 0, len(ids))
+	for _, id := range ids {
+		fields = append(fields, api.FieldValSetType{ID: id, Value: values[id]})
+	}
+	return fields
+}
+
 // parseStepsFromItem extracts test steps from an item's field values.
 func parseStepsFromItem(item *api.TrimItem, fm *fieldmap.FieldMap) []TestStep {
 	if item.FieldValList == nil {
@@ -191,25 +226,25 @@ func updateXTCResults(svc *service.MatrixService, project string, fm *fieldmap.F
 		}
 	}
 
-	fields := []api.FieldValSetType{
-		{ID: testerID, Value: results.Tester},
-		{ID: dateID, Value: testDate},
-		{ID: runResultID, Value: runResult},
-		{ID: stepsID, Value: string(stepsJSON)},
+	overrides := map[int]string{
+		testerID:    results.Tester,
+		dateID:      testDate,
+		runResultID: runResult,
+		stepsID:     string(stepsJSON),
 	}
 
 	// Optionally set version field
 	if results.SUTVersion != "" {
 		versionID, err := fm.Resolve("XTC", "Version")
 		if err == nil {
-			fields = append(fields, api.FieldValSetType{ID: versionID, Value: results.SUTVersion})
+			overrides[versionID] = results.SUTVersion
 		}
 	}
 
 	updateReq := &api.UpdateItemRequest{
 		Title:  item.Title,
 		Reason: "synced by mxreq",
-		Fields: fields,
+		Fields: mergeFieldValues(item, overrides),
 	}
 
 	_, err = svc.Items.Update(project, xtcRef, updateReq)
