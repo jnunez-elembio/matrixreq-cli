@@ -56,26 +56,42 @@ step-level pass/fail status matched by requirement links.`,
 			return output.PrintItem(getOutputFormat(), uploadResult)
 		}
 
-		// Print summary
-		successCount := 0
-		for ref, ok := range uploadResult.Successes {
-			if ok {
-				successCount++
-				fmt.Printf("  Updated %s\n", ref)
-			}
-		}
-
-		if len(uploadResult.Issues) > 0 {
-			fmt.Println("Issues:")
-			for _, issue := range uploadResult.Issues {
-				fmt.Printf("  %s\n", issue)
-			}
-		}
-
-		fmt.Printf("\nUploaded %d/%d XTCs successfully\n", successCount, len(uploadResult.Successes))
-
+		printUploadSummary(uploadResult)
 		return nil
 	},
+}
+
+// printUploadSummary reports what an upload wrote, what it refused, and why.
+// A refused XTC is called out separately from a failed one: nothing was sent,
+// so Matrix still holds whatever it held before.
+func printUploadSummary(uploadResult *execution.UploadResult) {
+	successCount := 0
+	for ref, ok := range uploadResult.Successes {
+		if ok {
+			successCount++
+			fmt.Printf("  Updated %s\n", ref)
+		}
+	}
+
+	if len(uploadResult.Skipped) > 0 {
+		fmt.Println("Out of sync — left untouched:")
+		for ref, reason := range uploadResult.Skipped {
+			fmt.Printf("  %s: %s\n", ref, reason)
+		}
+	}
+
+	if len(uploadResult.Issues) > 0 {
+		fmt.Println("Issues:")
+		for _, issue := range uploadResult.Issues {
+			fmt.Printf("  %s\n", issue)
+		}
+	}
+
+	fmt.Printf("\nUploaded %d/%d XTCs successfully", successCount, len(uploadResult.Successes))
+	if len(uploadResult.Skipped) > 0 {
+		fmt.Printf(" (%d out of sync, manual review needed)", len(uploadResult.Skipped))
+	}
+	fmt.Println()
 }
 
 var xtcStatsCmd = &cobra.Command{
@@ -335,20 +351,7 @@ var xtcExecuteCmd = &cobra.Command{
 			return fmt.Errorf("uploading results: %w", err)
 		}
 
-		successCount := 0
-		for ref, ok := range uploadResult.Successes {
-			if ok {
-				successCount++
-				fmt.Printf("  Updated %s\n", ref)
-			}
-		}
-		if len(uploadResult.Issues) > 0 {
-			fmt.Println("Issues:")
-			for _, issue := range uploadResult.Issues {
-				fmt.Printf("  %s\n", issue)
-			}
-		}
-		fmt.Printf("\nUploaded %d/%d XTCs successfully\n", successCount, len(uploadResult.Successes))
+		printUploadSummary(uploadResult)
 		return nil
 	},
 }

@@ -353,13 +353,30 @@ Four subcommands under `mxreq xtc`:
 |------------|-------------|
 | `xtc create` | Creates an XTC run folder from one or more TC folders (`POST /{project}/execute`). Accepts `--map Category.Label=Category.Label` to copy TC field values onto XTC items, and `--preset Category.Label=Value` to hard-set fields on all created XTC items. `--dry-run` prints the resolved request JSON without calling the API. |
 | `xtc execute` | Combines `create` and `upload` in one shot: creates the XTC run (unless `--folder` is given to reuse an existing one) then immediately uploads results. Requires `--results <file>` or `--results-dir <dir>` (picks latest `results_*.yaml` automatically). |
-| `xtc upload` | Uploads a results YAML into an existing XTC folder without creating a new run. |
+| `xtc upload` | Uploads a results YAML into an existing XTC folder without creating a new run. Refuses to write any XTC that is out of sync with the local test (see Execution Upload below). |
 | `xtc stats` | Fetches all XTCs in a folder and prints per-test status, step counts, and requirement coverage totals. |
 
 Field label resolution in `--map` and `--preset` goes through `resolveFieldLabel(fm, spec)`, a local helper that splits `"Category.Label"` and calls `fm.Resolve()` against the cached fieldmap. No extra HTTP calls are made per flag.
 
 ### Execution Upload (`internal/execution/`)
 Uploads test execution results. Maps test cases (TC) to execution cases (XTC) via title parsing (expects `"Title (TC-1377)"` format). Tracks worst-case requirement coverage across multiple test cases.
+
+**Sync gate — an XTC is written only when it still matches the local test.** An XTC is created from a snapshot of its TC, so a local test that has gained or lost steps since the run was created no longer describes the same test case. `MatchSteps` (`match.go`, pure and unit-tested in `match_test.go`) compares step counts first, then matches results to steps by requirement link. Any of the following sets `OutOfSync`, and `UploadResults` then leaves the XTC **completely untouched** rather than writing a partial execution that Matrix would display as a finished run:
+
+| Drift | Detected by |
+|-------|-------------|
+| Local and upstream step counts differ | count comparison (reported alone — requirement findings would be noise) |
+| A requirement covered locally has no upstream step | `apply` finds no unfilled match |
+| An upstream requirement step is not covered locally | post-match scan for an empty `Result` |
+| Two results in one run claim the same XTC | `groupByTest` entry count |
+
+Refusals are reported in `UploadResult.Skipped` (XTC ref → short reason) **and** `Issues` (operator-facing text), with `Successes[ref] = false` so the `n/N` summary stays truthful. A skipped XTC is distinct from a failed one: nothing was sent, so Matrix still holds what it held before. Consumers should read `-o json` rather than scraping the summary — `ElementOS/framework/sync/xtc-results.ts` (`parseUploadResult`) does exactly that.
+
+Step-count drift is resolved by re-syncing the TC (`docstring:syncTests` on the ElementOS side) and recreating the XTC run, then re-uploading. Never "fix" it by loosening the gate.
+
+**`TestStep` is a partial view and must round-trip losslessly.** An upload rewrites the item's entire Steps field, so any key `TestStep` does not model would be *deleted* from the step. Matrix stores a step as a free-form object whose keys come from the project's `xtc_config`, so `TestStep` carries custom `MarshalJSON`/`UnmarshalJSON` that stash every unmodeled key in an `extra` map and write it back untouched. `modeledStepKeys` is derived from the struct tags by reflection, so adding a typed field cannot leave a key in both places.
+
+This is not theoretical: before that marshaler existed, every upload silently dropped `"Ref"` — the `xtc_config` column id CUJO reads for "Requirement/Tspec Link" — emptying that column on every XTC an upload touched, while `itemsync` kept writing it correctly on the TC side (see `stepsToJSON`). When adding a field to `TestStep`, do not switch it to a plain struct marshal.
 
 ### Templates (`internal/templates/`)
 Embedded templates for Go/Python/TypeScript scaffolding. Used by `cli/init_templates.go`.
