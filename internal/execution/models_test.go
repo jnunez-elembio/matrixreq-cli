@@ -6,7 +6,7 @@ import (
 )
 
 func TestTestStepPreservesUnmodeledKeys(t *testing.T) {
-	// "Ref" is the xtc_config column id CUJO reads for "Requirement/Tspec
+	// "Ref" is the xtc_config column id Matrix reads for "Requirement/Tspec
 	// Link"; the trailing key stands in for any other project-specific column.
 	const raw = `{"action":"verify","expected":"ok","Ref":"SOFT-5",` +
 		`"RequirementLink":"SOFT-5","projectColumn":"keep me"}`
@@ -109,9 +109,9 @@ func TestUploadRoundTripKeepsRequirementColumn(t *testing.T) {
 	if _, ok := got[0]["Ref"]; ok {
 		t.Errorf("action step gained a Ref: %v", got[0])
 	}
-	// Requirement-less steps stay resultless, as before.
-	if _, ok := got[0]["result"]; ok {
-		t.Errorf("action step gained a result: %v", got[0])
+	// Every step is recorded, including those with no requirement.
+	if got[0]["result"] != "p" {
+		t.Errorf("action step has no result: %v", got[0])
 	}
 }
 

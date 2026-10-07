@@ -35,7 +35,7 @@ type ExecutionResults struct {
 // does not model are kept verbatim in extra and written back untouched by
 // MarshalJSON, because an upload rewrites the whole Steps field: anything
 // dropped here is deleted from the item. That is how the "Requirement/Tspec
-// Link" column (the "Ref" key in CUJO) used to disappear from every XTC an
+// Link" column (the "Ref" key) used to disappear from every XTC an
 // upload touched, even though the upload never means to change step
 // definitions at all.
 type TestStep struct {
@@ -123,10 +123,10 @@ type UploadResult struct {
 // StepMatch is the outcome of matching one test's step results against the
 // steps an XTC holds.
 type StepMatch struct {
-	// Steps is the XTC's step list with results applied. Only meaningful when
-	// OutOfSync is false.
+	// Steps is the XTC's step list with a result on every step. It is nil when
+	// OutOfSync is set, so a caller that forgets to check fails loudly.
 	Steps []TestStep
-	// RunResult is the XTC's overall result, "p" or "f".
+	// RunResult is the XTC's overall result, "p" or "f". Empty when OutOfSync.
 	RunResult string
 	// OutOfSync reports that the local test and the XTC no longer describe the
 	// same test case, so nothing may be written to the XTC.

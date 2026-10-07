@@ -1,6 +1,9 @@
 package execution
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 // reqStep is an upstream step that verifies a requirement.
 func reqStep(req string) TestStep {
@@ -51,9 +54,12 @@ func TestMatchStepsInSync(t *testing.T) {
 	if m.Steps[1].Comment != "defaults populated" {
 		t.Errorf("SOFT-5 comment: got %q", m.Steps[1].Comment)
 	}
-	// Requirement-less steps carry no result, so they stay blank in Matrix.
-	if m.Steps[0].Result != "" || m.Steps[3].Result != "" {
-		t.Errorf("action steps gained a result: %+v, %+v", m.Steps[0], m.Steps[3])
+	// Every step is recorded, including those with no requirement, so none is
+	// left blank in a run Matrix shows as finished.
+	for i, step := range m.Steps {
+		if step.Result != "p" {
+			t.Errorf("step %d not recorded: %+v", i, step)
+		}
 	}
 }
 
@@ -131,7 +137,7 @@ func TestMatchStepsRefusesCountMismatch(t *testing.T) {
 
 func TestMatchStepsRefusesRequirementDriftAtEqualCount(t *testing.T) {
 	// Same number of steps, but a step's requirement changed locally: the
-	// count check passes and the requirement check has to catch it.
+	// count check passes and the per-index requirement check has to catch it.
 	upstream := []TestStep{reqStep("SOFT-4"), reqStep("SOFT-5")}
 	local := []ExecutionResultStep{pass("SOFT-4", "a"), pass("SOFT-9", "b")}
 
@@ -140,10 +146,141 @@ func TestMatchStepsRefusesRequirementDriftAtEqualCount(t *testing.T) {
 	if !m.OutOfSync {
 		t.Fatal("requirement drift was not reported as out of sync")
 	}
-	// Both directions are reported: SOFT-9 has no upstream step, and the
-	// upstream SOFT-5 step went unexecuted.
+	if len(m.Issues) != 1 {
+		t.Errorf("want the drifted step reported once, got %v", m.Issues)
+	}
+	assertNothingToWrite(t, m)
+}
+
+func TestMatchStepsRefusesReorderedSteps(t *testing.T) {
+	// Same steps, same count, different order: matching by requirement alone
+	// would accept this; matching by position does not.
+	upstream := []TestStep{reqStep("SOFT-4"), reqStep("SOFT-5")}
+	local := []ExecutionResultStep{pass("SOFT-5", "b"), pass("SOFT-4", "a")}
+
+	m := MatchSteps("TC-38", "XTC-1", local, upstream)
+
+	if !m.OutOfSync {
+		t.Fatal("reordered steps were not reported as out of sync")
+	}
 	if len(m.Issues) != 2 {
-		t.Errorf("want both drift directions reported, got %v", m.Issues)
+		t.Errorf("want both misplaced steps reported, got %v", m.Issues)
+	}
+	assertNothingToWrite(t, m)
+}
+
+func TestMatchStepsReportsEveryDrift(t *testing.T) {
+	upstream := []TestStep{reqStep("SOFT-1"), reqStep("SOFT-2"), reqStep("SOFT-3")}
+	local := []ExecutionResultStep{pass("SOFT-7", "a"), pass("SOFT-2", "b"), pass("SOFT-8", "c")}
+
+	m := MatchSteps("TC-38", "XTC-1", local, upstream)
+
+	if len(m.Issues) != 2 {
+		t.Errorf("want every drifted step reported, got %v", m.Issues)
+	}
+}
+
+func TestMatchStepsRefusesActionStepBecomingRequirementStep(t *testing.T) {
+	upstream := []TestStep{actionStep("navigate"), reqStep("SOFT-5")}
+	local := []ExecutionResultStep{pass("SOFT-5", "a"), pass("SOFT-5", "b")}
+
+	m := MatchSteps("TC-38", "XTC-1", local, upstream)
+
+	if !m.OutOfSync {
+		t.Fatal("a step that gained a requirement was not reported as out of sync")
+	}
+}
+
+func TestMatchStepsFailureOnStepWithoutRequirementFailsRun(t *testing.T) {
+	upstream := []TestStep{actionStep("navigate"), reqStep("SOFT-5")}
+	local := []ExecutionResultStep{
+		{Actual: "page did not load", Status: "FAIL"},
+		pass("SOFT-5", "ok"),
+	}
+
+	m := MatchSteps("TC-38", "XTC-1", local, upstream)
+
+	if m.OutOfSync {
+		t.Fatalf("unexpected out of sync: %v", m.Issues)
+	}
+	if m.RunResult != "f" {
+		t.Errorf("RunResult: got %q, want %q — a failed action step was lost", m.RunResult, "f")
+	}
+	if m.Steps[0].Result != "f" || m.Steps[0].Comment != "page did not load" {
+		t.Errorf("failed action step not recorded: %+v", m.Steps[0])
+	}
+}
+
+func TestMatchStepsNeverPassesABlankRun(t *testing.T) {
+	// No step in this test carries a requirement. Every step must still get a
+	// result, so the run cannot finish as "passed" with all of them blank.
+	upstream := []TestStep{actionStep("navigate"), actionStep("discard")}
+	local := []ExecutionResultStep{
+		{Actual: "navigate", Status: "PASS"},
+		{Actual: "discard", Status: "PASS"},
+	}
+
+	m := MatchSteps("TC-38", "XTC-1", local, upstream)
+
+	if m.OutOfSync {
+		t.Fatalf("unexpected out of sync: %v", m.Issues)
+	}
+	for i, step := range m.Steps {
+		if step.Result == "" {
+			t.Errorf("step %d left blank: %+v", i, step)
+		}
+	}
+}
+
+func TestMatchStepsRefusesEmptyRun(t *testing.T) {
+	m := MatchSteps("TC-38", "XTC-1", nil, nil)
+
+	if !m.OutOfSync {
+		t.Fatal("a run with no steps was not reported as out of sync")
+	}
+	assertNothingToWrite(t, m)
+}
+
+func TestMatchStepsRefusesUnknownStatus(t *testing.T) {
+	for _, status := range []string{"SKIP", "BLOCKED", "pass", ""} {
+		t.Run(status, func(t *testing.T) {
+			upstream := []TestStep{reqStep("SOFT-5")}
+			local := []ExecutionResultStep{{Requirement: "SOFT-5", Actual: "a", Status: status}}
+
+			m := MatchSteps("TC-38", "XTC-1", local, upstream)
+
+			if !m.OutOfSync {
+				t.Fatalf("status %q was accepted", status)
+			}
+			assertNothingToWrite(t, m)
+		})
+	}
+}
+
+// assertNothingToWrite checks that an out-of-sync match hands back nothing a
+// caller could mistakenly upload.
+func assertNothingToWrite(t *testing.T, m StepMatch) {
+	t.Helper()
+	if m.Steps != nil {
+		t.Errorf("out-of-sync match still carries steps: %+v", m.Steps)
+	}
+	if m.RunResult != "" {
+		t.Errorf("out-of-sync match still carries a run result: %q", m.RunResult)
+	}
+}
+
+func TestClearResultsDoesNotShareUnmodeledKeys(t *testing.T) {
+	const raw = `[{"action":"verify","Ref":"SOFT-5"}]`
+	var steps []TestStep
+	if err := json.Unmarshal([]byte(raw), &steps); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	cleared := ClearResults(steps)
+	cleared[0].extra["Ref"] = json.RawMessage(`"changed"`)
+
+	if string(steps[0].extra["Ref"]) != `"SOFT-5"` {
+		t.Errorf("clearing results aliased the input's unmodeled keys: %s", steps[0].extra["Ref"])
 	}
 }
 

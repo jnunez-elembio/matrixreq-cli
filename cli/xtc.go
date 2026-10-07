@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/VladGavrila/matrixreq-cli/internal/api"
@@ -52,31 +53,54 @@ step-level pass/fail status matched by requirement links.`,
 			return err
 		}
 
-		if getOutputFormat() == "json" {
-			return output.PrintItem(getOutputFormat(), uploadResult)
-		}
+		strict, _ := cmd.Flags().GetBool("strict")
 
-		printUploadSummary(uploadResult)
-		return nil
+		if getOutputFormat() == "json" {
+			if err := output.PrintItem(getOutputFormat(), uploadResult); err != nil {
+				return err
+			}
+		} else {
+			printUploadSummary(uploadResult)
+		}
+		return strictUploadError(uploadResult, strict)
 	},
+}
+
+// strictUploadError turns refused XTCs into a failure when --strict is set, so
+// CI and scripts notice a skipped XTC from the exit code alone. The summary or
+// JSON has already been printed by the time this runs. Without --strict an
+// out-of-sync XTC is reported but does not fail the command.
+func strictUploadError(uploadResult *execution.UploadResult, strict bool) error {
+	if !strict || len(uploadResult.Skipped) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%d XTC(s) out of sync and left untouched: %s",
+		len(uploadResult.Skipped), strings.Join(sortedKeys(uploadResult.Skipped), ", "))
+}
+
+// sortedKeys returns a map's keys in order, so output is stable run to run.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // printUploadSummary reports what an upload wrote, what it refused, and why.
 // A refused XTC is called out separately from a failed one: nothing was sent,
 // so Matrix still holds whatever it held before.
+//
+// Every refusal already has an operator-facing message in Issues, naming the
+// XTC and what drifted, so it is not repeated as its own block; the count at the
+// end is what marks the XTCs as refused. Refs are sorted for stable output.
 func printUploadSummary(uploadResult *execution.UploadResult) {
 	successCount := 0
-	for ref, ok := range uploadResult.Successes {
-		if ok {
+	for _, ref := range sortedKeys(uploadResult.Successes) {
+		if uploadResult.Successes[ref] {
 			successCount++
 			fmt.Printf("  Updated %s\n", ref)
-		}
-	}
-
-	if len(uploadResult.Skipped) > 0 {
-		fmt.Println("Out of sync — left untouched:")
-		for ref, reason := range uploadResult.Skipped {
-			fmt.Printf("  %s: %s\n", ref, reason)
 		}
 	}
 
@@ -89,7 +113,8 @@ func printUploadSummary(uploadResult *execution.UploadResult) {
 
 	fmt.Printf("\nUploaded %d/%d XTCs successfully", successCount, len(uploadResult.Successes))
 	if len(uploadResult.Skipped) > 0 {
-		fmt.Printf(" (%d out of sync, manual review needed)", len(uploadResult.Skipped))
+		fmt.Printf(" (%d out of sync, left untouched, manual review needed: %s)",
+			len(uploadResult.Skipped), strings.Join(sortedKeys(uploadResult.Skipped), ", "))
 	}
 	fmt.Println()
 }
@@ -351,8 +376,9 @@ var xtcExecuteCmd = &cobra.Command{
 			return fmt.Errorf("uploading results: %w", err)
 		}
 
+		strict, _ := cmd.Flags().GetBool("strict")
 		printUploadSummary(uploadResult)
-		return nil
+		return strictUploadError(uploadResult, strict)
 	},
 }
 
@@ -401,6 +427,7 @@ func init() {
 
 	xtcUploadCmd.Flags().StringP("folder", "f", "", "Target XTC folder (e.g., F-XTC-123)")
 	_ = xtcUploadCmd.MarkFlagRequired("folder")
+	xtcUploadCmd.Flags().Bool("strict", false, "Exit non-zero when any XTC is out of sync and left untouched")
 
 	xtcStatsCmd.Flags().StringP("folder", "f", "", "Target XTC folder (e.g., F-XTC-123)")
 	_ = xtcStatsCmd.MarkFlagRequired("folder")
@@ -423,6 +450,7 @@ func init() {
 	xtcExecuteCmd.Flags().StringP("reason", "r", "", "Reason")
 	xtcExecuteCmd.Flags().StringArray("map", nil, "Field mapping: Category.Label=Category.Label (repeatable)")
 	xtcExecuteCmd.Flags().StringArray("preset", nil, "XTC field preset: Category.Label=Value (repeatable)")
+	xtcExecuteCmd.Flags().Bool("strict", false, "Exit non-zero when any XTC is out of sync and left untouched")
 	xtcExecuteCmd.Flags().Bool("dry-run", false, "Print resolved ExecuteRequest as JSON and exit (skips upload)")
 	_ = xtcExecuteCmd.MarkFlagRequired("reason")
 	xtcExecuteCmd.MarkFlagsMutuallyExclusive("folder", "input")
